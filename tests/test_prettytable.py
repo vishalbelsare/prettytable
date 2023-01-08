@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import datetime as dt
 import io
 import random
 import sqlite3
 from math import e, pi, sqrt
-from typing import Any, List
+from typing import Any
 
 import pytest
 
@@ -484,6 +486,10 @@ class TestOptionAttribute:
             city_data_prettytable.get_string() == city_data_prettytable[:].get_string()
         )
 
+    def test_preserve_internal_border(self):
+        pt = PrettyTable(preserve_internal_border=True)
+        assert pt.preserve_internal_border is True
+
 
 @pytest.fixture(scope="module")
 def db_cursor():
@@ -547,6 +553,13 @@ class TestBasic:
     def test_all_lengths_equal_with_title(self, city_data_prettytable: PrettyTable):
         """All lines in a table should be of the same length."""
         city_data_prettytable.title = "My table"
+        self._test_all_length_equal(city_data_prettytable)
+
+    def test_all_lengths_equal_with_long_title(
+        self, city_data_prettytable: PrettyTable
+    ):
+        """All lines in a table should be of the same length, even with a long title."""
+        city_data_prettytable.title = "My table (75 characters wide) " + "=" * 45
         self._test_all_length_equal(city_data_prettytable)
 
     def test_no_blank_lines_without_border(self, city_data_prettytable: PrettyTable):
@@ -857,7 +870,7 @@ class TestBreakLine:
         ],
     )
     def test_break_line_ASCII(
-        self, rows: List[List[Any]], hrule: int, expected_result: str
+        self, rows: list[list[Any]], hrule: int, expected_result: str
     ):
         t = PrettyTable(["Field 1", "Field 2"])
         for row in rows:
@@ -1695,6 +1708,13 @@ def test_paginate():
     assert "\f" in paginated
     assert paginated.endswith(expected_page_2)
 
+    # Act
+    paginated = t.paginate(page_length=4, line_break="\n")
+
+    # Assert
+    assert "\f" not in paginated
+    assert "\n" in paginated
+
 
 def test_add_rows():
     """A table created with multiple add_row calls
@@ -1892,6 +1912,59 @@ class TestRepr:
         assert row_prettytable._repr_html_() == row_prettytable.get_html_string()
 
 
+class TestMinTableWidth:
+    @pytest.mark.parametrize(
+        "loops, fields, desired_width, border, internal_border",
+        [
+            (15, ["Test table"], 20, True, False),
+            (16, ["Test table"], 21, True, False),
+            (18, ["Test table", "Test table 2"], 40, True, False),
+            (19, ["Test table", "Test table 2"], 41, True, False),
+            (21, ["Test table", "Test col 2", "Test col 3"], 50, True, False),
+            (22, ["Test table", "Test col 2", "Test col 3"], 51, True, False),
+            (19, ["Test table"], 20, False, False),
+            (20, ["Test table"], 21, False, False),
+            (25, ["Test table", "Test table 2"], 40, False, False),
+            (26, ["Test table", "Test table 2"], 41, False, False),
+            (25, ["Test table", "Test col 2", "Test col 3"], 50, False, False),
+            (26, ["Test table", "Test col 2", "Test col 3"], 51, False, False),
+            (18, ["Test table"], 20, False, True),
+            (19, ["Test table"], 21, False, True),
+            (23, ["Test table", "Test table 2"], 40, False, True),
+            (24, ["Test table", "Test table 2"], 41, False, True),
+            (22, ["Test table", "Test col 2", "Test col 3"], 50, False, True),
+            (23, ["Test table", "Test col 2", "Test col 3"], 51, False, True),
+        ],
+    )
+    def test_min_table_width(
+        self, loops, fields, desired_width, border, internal_border
+    ):
+        for col_width in range(loops):
+            x = prettytable.PrettyTable()
+            x.border = border
+            x.preserve_internal_border = internal_border
+            x.field_names = fields
+            x.add_row(["X" * col_width] + ["" for _ in range(len(fields) - 1)])
+            x.min_table_width = desired_width
+            t = x.get_string()
+            if border is False and internal_border is False:
+                assert [len(x) for x in t.split("\n")] == [desired_width, desired_width]
+            elif border is False and internal_border is True:
+                assert [len(x) for x in t.split("\n")] == [
+                    desired_width,
+                    desired_width - 1,
+                    desired_width,
+                ]
+            else:
+                assert [len(x) for x in t.split("\n")] == [
+                    desired_width,
+                    desired_width,
+                    desired_width,
+                    desired_width,
+                    desired_width,
+                ]
+
+
 class TestMaxTableWidth:
     def test_max_table_width(self):
         pt = PrettyTable()
@@ -1907,4 +1980,75 @@ class TestMaxTableWidth:
 |  0  |
 +-----+
 """.strip()
+        )
+
+
+class TestPreservingInternalBorders:
+    def test_internal_border_preserved(self):
+        pt = helper_table(3)
+        pt.border = False
+        pt.preserve_internal_border = True
+
+        assert (
+            pt.get_string().strip()
+            == """
+ Field 1 | Field 2 | Field 3  
+---------+---------+---------
+ value 1 |  value2 |  value3  
+ value 4 |  value5 |  value6  
+ value 7 |  value8 |  value9 
+""".strip()  # noqa: W291
+        )
+
+    def test_internal_border_preserved_latex(self):
+        pt = helper_table(3)
+        pt.border = False
+        pt.format = True
+        pt.preserve_internal_border = True
+
+        assert pt.get_latex_string().strip() == (
+            "\\begin{tabular}{c|c|c}\r\n"
+            "Field 1 & Field 2 & Field 3 \\\\\r\n"
+            "value 1 & value2 & value3 \\\\\r\n"
+            "value 4 & value5 & value6 \\\\\r\n"
+            "value 7 & value8 & value9 \\\\\r\n"
+            "\\end{tabular}"
+        )
+
+    def test_internal_border_preserved_html(self):
+        pt = helper_table(3)
+        pt.format = True
+        pt.border = False
+        pt.preserve_internal_border = True
+
+        assert (
+            pt.get_html_string().strip()
+            == """
+<table rules="cols">
+    <thead>
+        <tr>
+            <th style="padding-left: 1em; padding-right: 1em; text-align: center">Field 1</th>
+            <th style="padding-left: 1em; padding-right: 1em; text-align: center">Field 2</th>
+            <th style="padding-left: 1em; padding-right: 1em; text-align: center">Field 3</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td style="padding-left: 1em; padding-right: 1em; text-align: center; vertical-align: top">value 1</td>
+            <td style="padding-left: 1em; padding-right: 1em; text-align: center; vertical-align: top">value2</td>
+            <td style="padding-left: 1em; padding-right: 1em; text-align: center; vertical-align: top">value3</td>
+        </tr>
+        <tr>
+            <td style="padding-left: 1em; padding-right: 1em; text-align: center; vertical-align: top">value 4</td>
+            <td style="padding-left: 1em; padding-right: 1em; text-align: center; vertical-align: top">value5</td>
+            <td style="padding-left: 1em; padding-right: 1em; text-align: center; vertical-align: top">value6</td>
+        </tr>
+        <tr>
+            <td style="padding-left: 1em; padding-right: 1em; text-align: center; vertical-align: top">value 7</td>
+            <td style="padding-left: 1em; padding-right: 1em; text-align: center; vertical-align: top">value8</td>
+            <td style="padding-left: 1em; padding-right: 1em; text-align: center; vertical-align: top">value9</td>
+        </tr>
+    </tbody>
+</table>
+""".strip()  # noqa: E501
         )
